@@ -1,0 +1,169 @@
+import requests
+# Rüzgar hızı tahmini için OpenWeatherMap API'sini kullanacağız
+# OpenWeatherMap API anahtarınızı buraya girin
+#Ayni modeli burada yaptim aslinda, ama bu sefer OpenWeatherMap API'sini kullanarak rüzgar hızlarını alacağız ve bir model ile enerji üretimini tahmin edeceğiz.
+#Ben openweather APi alamadim ucretli sanirim
+
+API_KEY = "YOUR_OPENWEATHER_API_KEY"  # Buraya kendi key'ini yaz
+BASE_URL = "https://api.openweathermap.org/data/2.5/forecast"
+
+def get_daily_wind_speed(lat, lon):
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "appid": API_KEY,
+        "units": "metric"
+    }
+
+    try:
+        response = requests.get(BASE_URL, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        # 3 gün için her gün saat 12:00'daki veriyi alalım (yaklaşık her 8. index)
+        wind_speeds = [entry['wind']['speed'] for i, entry in enumerate(data['list']) if i % 8 == 4][:3]
+
+        print(f"Rüzgar hızları: {wind_speeds}")
+        return wind_speeds
+
+    except requests.exceptions.HTTPError as errh:
+        print("HTTP hatası:", errh)
+    except requests.exceptions.ConnectionError as errc:
+        print("Bağlantı hatası:", errc)
+    except requests.exceptions.Timeout as errt:
+        print("Zaman aşımı:", errt)
+    except requests.exceptions.RequestException as err:
+        print("Beklenmeyen hata:", err)
+
+def geo_weight(location_type="coastal", elevation=1132):
+    weight = 1.0
+
+    if location_type == "coastal":
+        weight += 0.5
+    elif location_type == "mountain":
+        weight += 0.3
+    elif location_type == "inland":
+        weight += 0.2
+
+    if elevation > 1000:
+        weight += 0.2
+    elif elevation < 500:
+        weight -= 0.1
+
+    return weight
+def calculate_wind_energy(wind_speed, area=10.0, air_density=1.225):
+    return 0.5 * air_density * area * (wind_speed ** 3)
+
+import torch
+import torch.nn as nn
+import numpy as np
+# PyTorch cihazını ayarlayalım
+# Eğer CUDA destekliyorsa GPU kullan, değilse CPU kullan
+def device():
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu") 
+
+# Örnek eğitim verisi: (wind_speed, geo_weight) → energy_output
+train_X = np.array([
+    [4.5, 1.5],
+    [5.0, 1.3],
+    [5.5, 1.7],
+    [6.0, 1.2],
+    [6.2, 1.8],
+], dtype=np.float32)
+
+train_y = np.array([
+    calculate_wind_energy(4.5)*1.5,
+    calculate_wind_energy(5.0)*1.3,
+    calculate_wind_energy(5.5)*1.7,
+    calculate_wind_energy(6.0)*1.2,
+    calculate_wind_energy(6.2)*1.8
+], dtype=np.float32).reshape(-1, 1)
+
+X = torch.tensor(train_X)
+y = torch.tensor(train_y)
+
+class WindModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc = nn.Linear(2, 1)
+
+    def forward(self, x):
+        return self.fc(x)
+
+model = WindModel()
+loss_fn = nn.MSELoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+for epoch in range(1000):
+    pred = model(X)
+    loss = loss_fn(pred, y)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+import torch
+import torch.nn as nn
+import numpy as np
+
+# Örnek eğitim verisi: (wind_speed, geo_weight) → energy_output
+train_X = np.array([
+    [4.5, 1.5],
+    [5.0, 1.3],
+    [5.5, 1.7],
+    [6.0, 1.2],
+    [6.2, 1.8],
+], dtype=np.float32)
+
+train_y = np.array([
+    calculate_wind_energy(4.5)*1.5,
+    calculate_wind_energy(5.0)*1.3,
+    calculate_wind_energy(5.5)*1.7,
+    calculate_wind_energy(6.0)*1.2,
+    calculate_wind_energy(6.2)*1.8
+], dtype=np.float32).reshape(-1, 1)
+
+X = torch.tensor(train_X)
+y = torch.tensor(train_y)
+
+class WindModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc = nn.Linear(2, 1)
+
+    def forward(self, x):
+        return self.fc(x)
+
+model = WindModel()
+loss_fn = nn.MSELoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+for epoch in range(1000):
+    pred = model(X)
+    loss = loss_fn(pred, y)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+lat, lon = 39.0, 35.0  # Türkiye merkez noktası
+wind_speeds = get_daily_wind_speed(lat, lon)
+location_type = "inland"
+elevation = 1132
+
+weight = geo_weight(location_type, elevation)
+
+if not wind_speeds or len(wind_speeds) < 3:
+    print("Yeterli rüzgar hızı verisi alınamadı. Lütfen API anahtarınızı ve bağlantınızı kontrol edin.")
+else:
+    print(f"Coğrafi ağırlık: {weight}")
+    print("Rüzgar hızları alındı, enerji üretimi tahmin ediliyor...")
+    # Rüzgar hızlarını kullanarak enerji üretimini tahmin edelim
+    model.to(device())
+    model.eval()
+    for day, speed in enumerate(wind_speeds, start=1):
+        input_tensor = torch.tensor([[speed, weight]], dtype=torch.float32)
+        prediction = model(input_tensor).item()
+        print(f"Gün {day}: Rüzgar Hızı={speed} m/s | Tahmini Enerji Üretimi={prediction/1000:.2f} kW")
+# Remove the print(f"Gün {day}: ...") line here!
+# Bu kod, OpenWeatherMap API'sinden rüzgar hızlarını alır, coğrafi ağırlığı hesaplar ve bir PyTorch modeli ile enerji üretimini tahmin eder.
+
+
+

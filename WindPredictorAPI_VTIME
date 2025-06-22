@@ -1,0 +1,104 @@
+import pip
+import requests
+import numpy as np
+import torch
+import torch.nn as nn
+from fastapi import FastAPI
+
+#Rüzgarı verilerini çekmek için gerekli kütüphaneleri içe aktaralım
+def device_check():
+    try:
+        import torch
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+        print(f"Device: {device}")
+        return device
+    except ImportError:
+        print("PyTorch kütüphanesi yüklü değil.")
+        return None
+    
+def get_wind_data():
+    url = "https://globalwindatlas.info/api/gis/country/TUR/wind-speed/150"
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        with open("turkey_wind_data.tif", "wb") as f:
+            f.write(response.content)
+        print("Veri başarıyla indirildi.")
+    else:
+        print("Veri çekilemedi:", response.status_code)
+
+from PIL import Image
+
+def visualize_tif(file_path="turkey_wind_data.tif"):
+    try:
+        image = Image.open(file_path)
+        image.show()
+    except Exception as e:
+        print("Görsel yüklenemedi:", e)
+    return image
+
+def calculate_wind_energy(wind_speed, area=10.0, air_density=1.225):
+    return 0.5 * air_density * area * (wind_speed ** 3)
+# Rüzgar enerjisi hesaplamak için gerekli fonksiyonları tanımlayalım
+def wind_energy_from_image(image_path="turkey_wind_data.tif"):
+    image = Image.open(image_path)
+    wind_speeds = np.array(image)  # Assuming the image is in a format that can be converted to an array
+    wind_energy = calculate_wind_energy(wind_speeds)
+    return wind_energy
+# PyTorch ile basit bir rüzgar tahmin modeli oluşturalım
+# Basit bir veri örneği (günlük ortalama hızlar)
+data = np.array([4.2, 4.5, 4.6, 4.7, 4.8, 5.0, 5.2, 5.3], dtype=np.float32)
+X = torch.tensor(data[:-3].reshape(-1, 1))
+y = torch.tensor(data[3:].reshape(-1, 1))
+
+class WindPredictor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(1, 1)
+
+    def forward(self, x):
+        return self.linear(x)
+
+model = WindPredictor()
+criterion = nn.MSELoss()
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+
+# Eğitim
+for epoch in range(1000):
+    outputs = model(X)
+    loss = criterion(outputs, y)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+print("Tahmin edilen gelecek 3 gün rüzgar hızları:")
+future = model(torch.tensor(data[-3:].reshape(-1, 1)))
+print(future.detach().numpy())
+
+# FastAPI ile basit bir API oluşturalı
+
+app = FastAPI()
+
+@app.get("/predict")
+def predict():
+    # Sabit veri ile çalışalım şimdilik
+    wind_speed = 5.5
+    energy = calculate_wind_energy(wind_speed)
+    return {"wind_speed": wind_speed, "estimated_energy_kW": round(energy / 1000, 2)}
+@app.get("/visualize")
+def visualize():
+    image = visualize_tif()
+    if image:
+        return {"message": "Görsel başarıyla yüklendi."}
+    else:
+        return {"message": "Görsel yüklenemedi."}
+@app.get("/wind_data")
+def wind_data():
+    get_wind_data()
+    return {"message": "Rüzgar verileri indirildi."}
+
+
+
